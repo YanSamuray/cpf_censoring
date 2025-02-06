@@ -11,8 +11,7 @@ def main():
         return
 
     print("Iniciando o processamento dos PDFs...\n")
-    # Agora, a função process_all_pdfs aceita o parâmetro force_ocr
-    censor.process_all_pdfs(input_dir, output_dir, force_ocr=True)
+    censor.process_all_pdfs(input_dir, output_dir)
     print("Processamento concluído.")
 
 if __name__ == '__main__':

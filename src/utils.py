@@ -8,4 +8,3 @@ def get_data_dirs(base_path: Path):
     input_dir = base_path / "data" / "input"
     output_dir = base_path / "data" / "output"
     return input_dir, output_dir
-

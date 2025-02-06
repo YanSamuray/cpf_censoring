@@ -1,91 +1,118 @@
 import re
 import fitz  # PyMuPDF
 from pathlib import Path
-import numpy as np
-import cv2
-import easyocr
 
-def convert_bbox_to_rect(bbox, img_height):
-    """
-    Converte uma bounding box retornada pelo EasyOCR (lista de 4 pontos [x, y] com origem no topo)
-    para um objeto fitz.Rect no sistema de coordenadas do PDF (origem em baixo).
-    """
-    # Converte cada ponto: (x, y_image) -> (x, img_height - y_image)
-    converted = [(pt[0], img_height - pt[1]) for pt in bbox]
-    left = min(pt[0] for pt in converted)
-    right = max(pt[0] for pt in converted)
-    bottom = min(pt[1] for pt in converted)
-    top = max(pt[1] for pt in converted)
-    return fitz.Rect(left, bottom, right, top)
+def union_rectangles(rects):
+    """Recebe uma lista de fitz.Rect e retorna o retângulo que os envolve todos."""
+    if not rects:
+        return None
+    x0 = min(r.x0 for r in rects)
+    y0 = min(r.y0 for r in rects)
+    x1 = max(r.x1 for r in rects)
+    y1 = max(r.y1 for r in rects)
+    return fitz.Rect(x0, y0, x1, y1)
 
-def censor_partial_cpf_in_pdf(input_pdf_path: Path, output_pdf_path: Path, force_ocr: bool = False):
+def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Path):
     """
-    Abre o PDF de entrada, localiza números de CPF (nos formatos 'xxx.xxx.xxx-xx' ou 11 dígitos)
-    e redige (censura) os 3 primeiros dígitos e os 2 últimos, salvando o PDF processado.
+    Abre o PDF de entrada, localiza CPFs, RGs e Títulos de Eleitor e redige parte dos dígitos para censurá-los.
     
-    Se force_ocr for True, o método convencional de extração de texto é ignorado e o OCR (EasyOCR)
-    é utilizado para todas as páginas.
+    Para tentar corrigir CPFs quebrados em duas linhas, utiliza uma expressão regular flexível para CPF.
+    Também evita redacionar números que estejam associados a valores financeiros (precedidos por "R$").
     """
-    # Expressão regular para detectar CPF com ou sem formatação
-    cpf_regex = re.compile(r'\b(?:\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})\b')
-    
+    # Expressões regulares – ajuste conforme os padrões dos seus documentos.
+    # CPF: permite espaços, quebras de linha, pontos e traços opcionais, mas exige 4 grupos: 3-3-3-2 dígitos.
+    cpf_regex = re.compile(r'\b(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{2})\b', re.DOTALL)
+    # RG (exemplo): 1 ou 2 dígitos, opcional ponto, 3 dígitos, opcional ponto, 3 dígitos, opcional traço e dígito ou X
+    rg_regex = re.compile(r'\b\d{1,2}\.?\d{3}\.?\d{3}-?[\dXx]?\b')
+    # Título de Eleitor (exemplo): 12 dígitos ou em grupos com espaços
+    titulo_regex = re.compile(r'\b(?:\d{4}\s?\d{4}\s?\d{4}|\d{12})\b')
+
+    # Lista de padrões com um rótulo para facilitar o tratamento:
+    patterns = [
+        ("CPF", cpf_regex),
+        ("RG", rg_regex),
+        ("Titulo", titulo_regex)
+    ]
+
     try:
         doc = fitz.open(str(input_pdf_path))
     except Exception as e:
         raise RuntimeError(f"Erro ao abrir {input_pdf_path}: {e}")
-    
-    # Inicializa o leitor do EasyOCR (a inicialização pode demorar na primeira chamada)
-    reader = easyocr.Reader(['pt'], gpu=False)
-    
+
     for page in doc:
-        # Se não for forçado o OCR, tenta extrair o texto normalmente.
-        # Se force_ocr for True, força o uso do EasyOCR.
-        if not force_ocr:
-            text = page.get_text().strip()
-        else:
-            text = ""
-            
-        if text:
-            # Método convencional: usa o texto extraído pela camada do PDF
-            for match in cpf_regex.finditer(text):
+        raw_text = page.get_text()
+        # Junta as linhas – isso ajuda a unir trechos quebrados, embora nem sempre seja perfeito.
+        text = " ".join(raw_text.splitlines())
+
+        for label, regex in patterns:
+            # Procura todos os trechos que casem com o padrão
+            for match in regex.finditer(text):
                 matched_text = match.group()
-                # Busca as ocorrências do texto na página para obter as coordenadas
+                start_index = match.start()
+
+                # Se o trecho estiver precedido de um símbolo de moeda (ex.: "R$"), ignora-o.
+                window = text[max(0, start_index-5):start_index]
+                if "R$" in window:
+                    continue
+
+                # Tenta localizar as coordenadas na página usando o texto encontrado.
                 rects = page.search_for(matched_text)
+                # Se não encontrou (ex.: no caso de CPF quebrado em duas linhas), tenta procurar por cada grupo (somente para CPF).
+                if not rects and label == "CPF":
+                    groups = match.groups()  # Espera 4 grupos: (ddd, ddd, ddd, dd)
+                    group_rects = []
+                    for part in groups:
+                        found = page.search_for(part)
+                        if found:
+                            # Se encontrar mais de uma ocorrência, seleciona a que estiver mais próxima das demais.
+                            group_rects.append(found[0])
+                    if group_rects:
+                        rect = union_rectangles(group_rects)
+                        rects = [rect]
+                # Se ainda não encontrou, pula para o próximo
+                if not rects:
+                    continue
+
                 for rect in rects:
-                    total_chars = len(matched_text)
+                    # Calcula o número total de dígitos do trecho (somente dígitos)
+                    digits_only = "".join(ch for ch in matched_text if ch.isdigit())
+                    total_chars = len(digits_only)
                     if total_chars < 5:
-                        continue  # Garante que haja caracteres suficientes
-                    # Considera espaçamento uniforme entre os caracteres
+                        continue  # ignora ocorrências muito curtas
+
+                    # Define quantos dígitos serão censurados (ajuste conforme cada tipo)
+                    if label == "CPF":
+                        left_chars = 3
+                        right_chars = 2
+                    elif label == "RG":
+                        left_chars = 2
+                        right_chars = 1
+                    elif label == "Titulo":
+                        left_chars = 4
+                        right_chars = 2
+                    else:
+                        left_chars = 0
+                        right_chars = 0
+
+                    # Pressupondo espaçamento uniforme entre os caracteres:
                     char_width = rect.width / total_chars
-                    # Define a área para censurar os 3 primeiros dígitos
-                    left_rect = fitz.Rect(rect.x0, rect.y0, rect.x0 + 3 * char_width, rect.y1)
-                    # Define a área para censurar os 2 últimos dígitos
-                    right_rect = fitz.Rect(rect.x0 + (total_chars - 2) * char_width, rect.y0, rect.x1, rect.y1)
+
+                    left_rect = fitz.Rect(
+                        rect.x0,
+                        rect.y0,
+                        rect.x0 + left_chars * char_width,
+                        rect.y1
+                    )
+                    right_rect = fitz.Rect(
+                        rect.x0 + (total_chars - right_chars) * char_width,
+                        rect.y0,
+                        rect.x1,
+                        rect.y1
+                    )
                     page.add_redact_annot(left_rect, fill=(0, 0, 0))
                     page.add_redact_annot(right_rect, fill=(0, 0, 0))
-            page.apply_redactions()
-        else:
-            # Método com OCR: renderiza a página como imagem e utiliza o EasyOCR
-            pix = page.get_pixmap()
-            img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
-            if pix.n == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-            img_height = pix.height
-            results = reader.readtext(img)
-            for bbox, detected_text, conf in results:
-                # Se o texto detectado corresponder exatamente ao formato de CPF, aplica a censura
-                if cpf_regex.fullmatch(detected_text):
-                    rect = convert_bbox_to_rect(bbox, img_height)
-                    total_chars = len(detected_text)
-                    if total_chars < 5:
-                        continue
-                    char_width = rect.width / total_chars
-                    left_rect = fitz.Rect(rect.x0, rect.y0, rect.x0 + 3 * char_width, rect.y1)
-                    right_rect = fitz.Rect(rect.x0 + (total_chars - 2) * char_width, rect.y0, rect.x1, rect.y1)
-                    page.add_redact_annot(left_rect, fill=(0, 0, 0))
-                    page.add_redact_annot(right_rect, fill=(0, 0, 0))
-            page.apply_redactions()
-    
+        page.apply_redactions()
+
     try:
         doc.save(str(output_pdf_path))
     except Exception as e:
@@ -93,21 +120,18 @@ def censor_partial_cpf_in_pdf(input_pdf_path: Path, output_pdf_path: Path, force
     finally:
         doc.close()
 
-def process_all_pdfs(input_dir: Path, output_dir: Path, force_ocr: bool = False):
+def process_all_pdfs(input_dir: Path, output_dir: Path):
     """
-    Processa todos os arquivos PDF presentes em 'input_dir', aplicando a censura dos CPFs,
-    e salva os arquivos modificados em 'output_dir' com os mesmos nomes.
-    
-    O parâmetro force_ocr força o uso do OCR (EasyOCR) em todas as páginas, mesmo que a camada
-    de texto esteja presente.
+    Processa todos os arquivos PDF presentes em 'input_dir', aplicando a censura
+    para CPFs, RGs e Títulos de Eleitor, e salva os arquivos modificados em 'output_dir'
+    com os mesmos nomes.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    
     for pdf_file in input_dir.glob("*.pdf"):
         print(f"Processando {pdf_file.name}...")
         output_file = output_dir / pdf_file.name
         try:
-            censor_partial_cpf_in_pdf(pdf_file, output_file, force_ocr=force_ocr)
+            censor_partial_identifiers_in_pdf(pdf_file, output_file)
             print(f"Arquivo salvo em: {output_file}\n")
         except Exception as e:
             print(f"Erro ao processar {pdf_file.name}: {e}\n")
