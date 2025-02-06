@@ -1,3 +1,4 @@
+# main.py
 from pathlib import Path
 from src import censor, utils
 
