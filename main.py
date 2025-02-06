@@ -11,7 +11,7 @@ def main():
         return
 
     print("Iniciando o processamento dos PDFs...\n")
-    # Aqui, definimos force_ocr=True para forçar o OCR mesmo que o PDF já possua camada de texto
+    # Agora, a função process_all_pdfs aceita o parâmetro force_ocr
     censor.process_all_pdfs(input_dir, output_dir, force_ocr=True)
     print("Processamento concluído.")
 
