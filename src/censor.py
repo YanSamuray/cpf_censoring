@@ -14,22 +14,27 @@ def union_rectangles(rects):
 
 def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Path):
     """
-    Processa CPF, RG, Título de Eleitor e CNH com as seguintes regras:
-      - CPF: redacção parcial (oculta os 3 primeiros e 2 últimos dígitos)
-             – preserva o tratamento de CPF quebrado em duas linhas (usando retângulos individuais para grupos).
-      - RG, Título e CNH: redacção total (oculta todo o número).
+    Processa CPF, RG, Título de Eleitor e CNH segundo as seguintes regras:
+      - CPF: redacção parcial (oculta os 3 primeiros e 2 últimos dígitos). Se o CPF estiver quebrado em duas linhas,
+             utiliza os retângulos de cada grupo (apenas o 1º e o 4º grupo são redacionados).
+      - RG, Título de Eleitor e CNH: redacção total (oculta o número inteiro).
       
     O script ignora matches se:
-      - A janela de 30 caracteres anteriores contiver "r$", "cnpj", "id" ou "c/c".
-      - O match parecer um número financeiro (por exemplo, contém um separador decimal seguido de exatamente duas casas e o total de dígitos é menor que 10).
-      - Para CPF ou RG, se logo após o match houver uma barra seguida de 4 dígitos (opcionalmente hífen e 2 dígitos), sugerindo parte de um CNPJ.
+      - A janela de 30 caracteres anteriores contiver "r$", "cnpj", "id", "c/c" ou "matrícula:".
+      - O match parecer um valor financeiro (por conter um separador decimal seguido de exatamente duas casas e possuir menos de 10 dígitos).
+      - Para CPF e RG, se logo após o match (ignorando espaços) houver uma barra seguida de 4 dígitos (opcionalmente um hífen e 2 dígitos), sugerindo parte de um CNPJ.
+      
+    Também há um tratamento para remover prefixos como "CPF:" do match, de forma que o redimensionamento (redacção parcial) seja aplicado apenas aos dígitos.
     """
-    # Expressões regulares para os documentos:
-    cpf_regex = re.compile(r'\b(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{2})\b', re.DOTALL)
+    # Expressões regulares:
+    cpf_regex = re.compile(
+        r'\b(?:cpf[:\s]*)?(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{2})\b',
+        re.DOTALL | re.IGNORECASE
+    )
     rg_regex = re.compile(r'\b\d{1,2}\.?\d{3}\.?\d{3}-?[\dXx]?\b')
-    titulo_regex = re.compile(r'\b(\d{4})[\s\-]*(\d{4})[\s\-]*(\d{4})\b')
+    titulo_regex = re.compile(r'\b(?:título\s+de\s+eleitor[:\s]*)?(\d{4})[\s\-]*(\d{4})[\s\-]*(\d{4})\b', re.IGNORECASE)
     cnh_regex = re.compile(
-        r'\b(?:CNH|Carteira\s+(?:Nacional\s+)?de\s+Habilita(?:ção|cao))\s*[:\-]?\s*(\d{11})\b',
+        r'\b(?:cnh|carteira\s+(?:nacional\s+)?de\s+habilita(?:ção|cao))\s*[:\-]?\s*(\d{11})\b',
         re.IGNORECASE
     )
     
@@ -41,7 +46,10 @@ def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Pat
         ("CNH", cnh_regex)
     ]
     
-    # Regex para identificar um valor financeiro: número que termina com um separador decimal e duas casas
+    # Lista de palavras a serem ignoradas na janela de contexto (todas em minúsculas)
+    ignore_contexts = ["r$", "cnpj", "id", "c/c", "matrícula:"]
+    
+    # Regex para identificar valor financeiro simples (ex: "1234.56" ou "1234,56")
     financeiro_regex = re.compile(r'^\d+[.,]\d{2}$')
     
     try:
@@ -56,33 +64,45 @@ def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Pat
         
         for label, regex in patterns:
             for match in regex.finditer(text):
-                # Para CNH, usamos apenas o grupo que contém os 11 dígitos
-                if label == "CNH":
-                    matched_text = match.group(1)
-                else:
-                    matched_text = match.group()
+                # Obter o match e remover prefixos desnecessários (como "CPF:" ou "Título de Eleitor:")
+                matched_text = match.group()
+                # Para CPF, remova qualquer prefixo "cpf:" (já que o regex permite opcionalmente)
+                if label == "CPF":
+                    matched_text = re.sub(r'^(cpf[:\s]*)', '', matched_text, flags=re.IGNORECASE)
+                # Para Título, se houver prefixo "título de eleitor:" remova-o
+                if label == "Titulo":
+                    matched_text = re.sub(r'^(título\s+de\s+eleitor[:\s]*)', '', matched_text, flags=re.IGNORECASE)
                 start_index = match.start()
                 window = text[max(0, start_index-30):start_index].lower()
                 
-                # Ignora se a janela tiver indicadores indesejados
-                if any(substr in window for substr in ["r$", "cnpj", "id", "c/c"]):
+                # Ignorar se a janela contiver alguma das palavras indesejadas
+                if any(substr in window for substr in ignore_contexts):
                     continue
 
-                # Verifica se o match parece um valor financeiro (ex: "1234.56" ou "1234,56")
-                if financeiro_regex.fullmatch(matched_text.strip()):
-                    continue
+                # Se o match parece ser um valor financeiro (ex.: contém ponto ou vírgula e, quando removidos, possui menos de 10 dígitos), ignora
+                if (',' in matched_text or '.' in matched_text):
+                    temp = re.sub(r'[^\d]', '', matched_text)
+                    if len(temp) < 10:
+                        # Opcionalmente, pode testar com financeiro_regex se desejar algo mais restrito
+                        continue
 
-                # Para CPF e RG, se logo após o match (ignorando espaços) houver padrão de CNPJ, ignora
+                # Para CPF e RG, verificação extra: se logo após o match (ignorando espaços) houver
+                # uma barra seguida de 4 dígitos (opcionalmente hífen e 2 dígitos), descarta o match.
                 if label in ("CPF", "RG"):
                     after_text = text[match.end(): match.end()+20]
                     after_text_nospace = re.sub(r'\s+', '', after_text)
                     if re.match(r'^/\d{4}-?\d{2}', after_text_nospace):
-                        continue
+                        # Se o contexto tiver explicitamente "cpf" (no caso de CPF), pode ser um erro de fundo;
+                        # caso contrário, descarta.
+                        if label == "CPF" and "cpf" in window:
+                            pass
+                        else:
+                            continue
 
-                # Extrai apenas os dígitos
+                # Extrai somente os dígitos do matched_text
                 digits_only = "".join(ch for ch in matched_text if ch.isdigit())
                 
-                # Valida o tamanho para cada documento
+                # Valida o número de dígitos conforme o documento:
                 if label == "CPF":
                     if len(digits_only) != 11:
                         continue
@@ -98,10 +118,11 @@ def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Pat
                     if len(digits_only) != 11:
                         continue
 
-                # Localiza os retângulos na página
+                # Tenta localizar os retângulos na página para o matched_text
                 rects = page.search_for(matched_text)
-                # Se for CPF e não houver retângulos ou o retângulo parecer muito alto (indicando quebra em duas linhas),
-                # usa os retângulos de cada grupo para redacionar somente os dígitos desejados.
+                
+                # Para CPF: se não encontrar retângulos ou se o retângulo parecer alto (indicando quebra em duas linhas),
+                # tenta usar os retângulos de cada grupo individualmente e redaciona somente os grupos 1 e 4.
                 if label == "CPF":
                     use_groups = False
                     if not rects:
@@ -111,9 +132,10 @@ def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Pat
                         if union_rect.height > 15:
                             use_groups = True
                     if use_groups:
-                        groups = match.groups()  # Espera 4 grupos
+                        groups = match.groups()  # Os 4 grupos do CPF
+                        # Redaciona apenas o primeiro grupo (3 dígitos) e o quarto grupo (2 dígitos)
                         for i, part in enumerate(groups, start=1):
-                            if i in (1, 4):  # Apenas o primeiro (3 dígitos) e o último (2 dígitos)
+                            if i in (1, 4):
                                 found = page.search_for(part)
                                 if found:
                                     for rect in found:
@@ -123,11 +145,13 @@ def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Pat
                 if not rects:
                     continue
                 
+                # Para cada retângulo encontrado, aplica a redacção
                 for rect in rects:
                     total_chars = len(digits_only)
                     if total_chars < 5:
                         continue
                     if label == "CPF":
+                        # Redacção parcial: oculta os 3 primeiros e os 2 últimos dígitos
                         left_chars, right_chars = 3, 2
                         char_width = rect.width / total_chars
                         left_rect = fitz.Rect(
@@ -145,7 +169,7 @@ def censor_partial_identifiers_in_pdf(input_pdf_path: Path, output_pdf_path: Pat
                         page.add_redact_annot(left_rect, fill=(0, 0, 0))
                         page.add_redact_annot(right_rect, fill=(0, 0, 0))
                     else:
-                        # Para RG, Título e CNH: redaciona todo o número
+                        # Para RG, Título e CNH: redaciona o número inteiro
                         page.add_redact_annot(rect, fill=(0, 0, 0))
         page.apply_redactions()
     
