@@ -1,5 +1,2 @@
 # Ignora todos os arquivos desta pasta
 *
-
-# Exceto este próprio arquivo .gitignore
-!.gitignore
