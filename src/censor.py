@@ -31,18 +31,16 @@ def censor_cpf_in_pdf(input_pdf_path: Path, output_pdf_path: Path):
       - Ignora matches que aparentem ser valores financeiros.
       - Censura apenas se o número identificado for um CPF válido.
     """
-    # Regex para CPF (aceita opcionalmente "CPF:" e diversos separadores)
+    # Regex para CPF (aceita opcionalmente "CPF:" e diversos separadores, agora incluindo '/')
     cpf_regex = re.compile(
-        r'\b(?:cpf[:\s]*)?(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{3})[\s\.\-]*(\d{2})\b',
+        r'\b(?:cpf[:\s]*)?(\d{3})[\s\.\-/]*(\d{3})[\s\.\-/]*(\d{3})[\s\.\-/]*(\d{2})\b',
         re.DOTALL | re.IGNORECASE
     )
-    # Adiciona "certidão" à lista de contextos que indicam que o número não é CPF
     ignore_contexts = ["r$", "cnpj", "id", "c/c", "matrícula:", "certidão"]
     
     doc = fitz.open(str(input_pdf_path))
     for page in doc:
         raw_text = page.get_text()
-        # Junta as linhas para minimizar quebras inesperadas
         text = " ".join(raw_text.splitlines())
         
         for match in cpf_regex.finditer(text):
@@ -52,18 +50,16 @@ def censor_cpf_in_pdf(input_pdf_path: Path, output_pdf_path: Path):
                 continue
             
             m_text = match.group()
-            # Ignora se aparentar valor financeiro
             if (',' in m_text or '.' in m_text):
                 temp = re.sub(r'[^\d]', '', m_text)
                 if len(temp) < 10:
                     continue
             
-            groups = match.groups()  # Grupos: (3, 3, 3 e 2 dígitos)
+            groups = match.groups()
             digits_only = "".join(groups)
             if len(digits_only) != 11:
                 continue
             
-            # Só prossegue se for um CPF válido
             if not is_valid_cpf(digits_only):
                 continue
             
@@ -81,14 +77,3 @@ def censor_cpf_in_pdf(input_pdf_path: Path, output_pdf_path: Path):
         raise RuntimeError(f"Erro ao salvar {output_pdf_path}: {e}")
     finally:
         doc.close()
-
-def process_all_pdfs(input_dir: Path, output_dir: Path):
-    output_dir.mkdir(parents=True, exist_ok=True)
-    for pdf_file in input_dir.glob("*.pdf"):
-        print(f"Processando {pdf_file.name}...")
-        output_file = output_dir / pdf_file.name
-        try:
-            censor_cpf_in_pdf(pdf_file, output_file)
-            print(f"Arquivo salvo em: {output_file}\n")
-        except Exception as e:
-            print(f"Erro ao processar {pdf_file.name}: {e}\n")

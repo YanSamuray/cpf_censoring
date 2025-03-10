@@ -2,108 +2,74 @@ import os
 import re
 import fitz  # PyMuPDF
 
-# Expressão regular para capturar CPFs em formatos diversos:
-# - 123.456.789-00
-# - 12345678900
-# - Qualquer mistura de pontos e traços (opcionais)
-CPF_PATTERN = re.compile(r'\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b')
-
+# Nova expressão regular, agora permitindo o caractere '/'
+CPF_PATTERN = re.compile(r'\b\d{3}[ .\/-]*\d{3}[ .\/-]*\d{3}[ .\/-]*\d{2}\b')
 
 def mask_cpf_digits(cpf_text: str) -> str:
     """
-    Dado o texto capturado de CPF (que pode ter pontos e traços),
-    retorna uma forma padronizada na qual apenas 3 primeiros e 2 últimos
-    dígitos são censurados (substituídos por X).
+    Recebe o texto que representa um CPF (podendo ter espaços, pontos, hífens ou barras)
+    e retorna uma forma 'censurada' onde só se esconde os 3 primeiros e 2 últimos dígitos,
+    mantendo visíveis os 6 dígitos centrais.
 
     Exemplos:
-      - "123.456.789-00" => "XXX.456.789-XX"
-      - "12345678900"    => "XXX456789XX"
+      - "123.456.789-00" => "***.456.789-**"
+      - "12345678900"    => "***456789**"
+      - "000 000 000/00" => "*** 000 000/**"
     """
-
-    # Extrai somente dígitos
-    digits_only = re.sub(r'\D', '', cpf_text)  # "12345678900"
+    # Extrai apenas os dígitos
+    digits_only = re.sub(r'\D', '', cpf_text)
 
     if len(digits_only) != 11:
-        # Se não tiver exatamente 11 dígitos, retornamos o próprio texto
-        # ou alguma forma de fallback. Aqui opto por devolver igual.
         return cpf_text
 
-    # Quebra:  [123] [456789] [00]
-    first_3 = digits_only[:3]      # ex: 123
-    middle_6 = digits_only[3:9]    # ex: 456789
-    last_2 = digits_only[9:11]     # ex: 00
-
-    # Monta a parte censurada:
-    #   - Substitui primeiros 3 por "XXX"
-    #   - Substitui últimos 2 por "XX"
-    #   - Mantém meio intacto
-    censored_digits = f"XXX{middle_6}XX"  # "XXX456789XX"
-
-    # (1) Se quisermos manter a pontuação original (por exemplo, a mesma posição
-    #     de pontos e traços do CPF encontrado), precisamos analisar caractere
-    #     por caractere. Isso pode ficar mais complexo, pois teríamos que mapear
-    #     a posição exata dos símbolos.
-    #
-    # (2) Se quisermos forçar um formato padrão (###.###.###-##):
-    #     "XXX.456.789-XX"
-    #     É muitas vezes mais simples e direto.
-    #
-    # Abaixo, opto por **reformatar** para um padrão com pontuação:
-    if '.' in cpf_text or '-' in cpf_text:
-        # Ex.: "XXX.456.789-XX"
-        return f"{censored_digits[:3]}.{censored_digits[3:6]}.{censored_digits[6:9]}-{censored_digits[9:11]}"
-    else:
-        # Ex.: "XXX456789XX"
-        return censored_digits
-
+    first_3  = digits_only[:3]
+    middle_6 = digits_only[3:9]
+    last_2   = digits_only[9:]
+    
+    # Monta a string censurada com asteriscos
+    censored_digits = f"***{middle_6}**"
+    
+    # Preserva a formatação original (pontos, hífens, barras, etc.)
+    censored_cpf_chars = []
+    digit_index = 0
+    for char in cpf_text:
+        if char.isdigit():
+            censored_cpf_chars.append(censored_digits[digit_index])
+            digit_index += 1
+        else:
+            censored_cpf_chars.append(char)
+    
+    return "".join(censored_cpf_chars)
 
 def censor_cpfs_in_pdf(input_pdf_path: str, output_pdf_path: str):
     """
-    Abre um PDF, encontra CPFs e redige somente os 3 primeiros dígitos e os
-    2 últimos, preservando os dígitos do meio.
-    
-    :param input_pdf_path: Caminho completo do arquivo PDF de entrada.
-    :param output_pdf_path: Caminho completo do arquivo PDF de saída.
+    Abre um PDF, encontra CPFs (com ou sem pontuação/espacos/hifens/barras)
+    e substitui apenas os 3 primeiros e 2 últimos dígitos.
     """
     doc = fitz.open(input_pdf_path)
 
     for page in doc:
-        # Extrai todo o texto da página
         text = page.get_text()
-
-        # Localiza todos os CPFs via regex
         matches = list(CPF_PATTERN.finditer(text))
 
-        # Para cada CPF encontrado...
         for match in matches:
-            original_cpf = match.group()  # Ex.: "123.456.789-10"
+            original_cpf = match.group()
             censored_cpf = mask_cpf_digits(original_cpf)
 
-            # Buscamos a(s) área(s) de localização do CPF original
+            # Localiza a(s) área(s) de texto exata(s)
             areas = page.search_for(original_cpf)
-            
-            # Em cada área, criaremos um "redact annotation"
+
+            # Cria anotações de redação em cada área
             for area in areas:
-                # Adiciona a anotação de redação, mas passando 'text=censored_cpf'
-                # para sobrescrever o trecho original com a forma censurada.
-                annot = page.add_redact_annot(
-                    area,
-                    text=censored_cpf,   # texto que sobrepõe
-                )
-                # Ajusta cores de fundo e borda para branco, se desejar mostrar o texto censurado
-                # sobre fundo branco (sem retângulo preto).
-                # Caso queira um retângulo preto, use fill=(0,0,0).
-                annot.set_colors(stroke=(1,1,1), fill=(1,1,1))
+                annot = page.add_redact_annot(area, text=censored_cpf)
+                annot.set_colors(stroke=(1,1,1), fill=(1,1,1))  # Fundo branco
                 annot.set_opacity(1)
                 annot.update()
 
-        # Aplica as redações
         page.apply_redactions()
 
-    # Salva o PDF resultante
     doc.save(output_pdf_path)
     doc.close()
-
 
 def main():
     input_dir = "data/input"
@@ -115,10 +81,9 @@ def main():
             input_pdf = os.path.join(input_dir, filename)
             output_pdf = os.path.join(output_dir, filename)
 
-            print(f"[PROCESSANDO] {filename} ...")
+            print(f"[PROCESSANDO] {filename}...")
             censor_cpfs_in_pdf(input_pdf, output_pdf)
-            print(f"[OK] Arquivo censurado salvo em {output_pdf}\n")
-
+            print(f"[OK] Salvo em {output_pdf}\n")
 
 if __name__ == "__main__":
     main()
