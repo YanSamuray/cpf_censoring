@@ -33,9 +33,10 @@ def censor_cpf_in_pdf(input_pdf_path: Path, output_pdf_path: Path):
     """
     # Regex para CPF (aceita opcionalmente "CPF:" e diversos separadores, agora incluindo '/')
     cpf_regex = re.compile(
-        r'\b(?:cpf[:\s]*)?(\d{3})[\s\.\-/]*(\d{3})[\s\.\-/]*(\d{3})[\s\.\-/]*(\d{2})\b',
+        r'\b(?:nº\s*)?(?:cpf[:\s]*)?(\d{3})[\s\.\-/]*(\d{3})[\s\.\-/]*(\d{3})[\s\.\-/]*(\d{2})\b',
         re.DOTALL | re.IGNORECASE
     )
+
     ignore_contexts = ["r$", "cnpj", "id", "c/c", "matrícula:", "certidão"]
     
     doc = fitz.open(str(input_pdf_path))

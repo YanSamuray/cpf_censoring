@@ -2,8 +2,9 @@ import os
 import re
 import fitz  # PyMuPDF
 
-# Nova expressão regular, agora permitindo o caractere '/'
-CPF_PATTERN = re.compile(r'\b\d{3}[ .\/-]*\d{3}[ .\/-]*\d{3}[ .\/-]*\d{2}\b')
+# Expressão regular para encontrar CPFs
+CPF_PATTERN = re.compile(r'\b(?:nº\s*)?\d{3}[ .\/-]*\d{3}[ .\/-]*\d{3}[ .\/-]*\d{2}\b', re.IGNORECASE)
+
 
 def mask_cpf_digits(cpf_text: str) -> str:
     """
