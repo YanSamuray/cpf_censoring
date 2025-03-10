@@ -1,7 +1,9 @@
 # CPF Censoring Project
 
 Este projeto tem como objetivo processar arquivos PDF e censurar os CPFs encontrados neles.  
-A censura é aplicada apenas nos **3 primeiros dígitos** e nos **2 últimos dígitos** de cada CPF, preservando parcialmente a informação.
+A censura agora é aplicada substituindo os **3 primeiros dígitos** e os **2 últimos dígitos** por `*`, preservando parcialmente a informação.
+
+Repositório hospedado em: [GitHub - YanSamuray/cpf_censoring](https://github.com/YanSamuray/cpf_censoring)
 
 ## 📂 Estrutura do Projeto
 
@@ -24,7 +26,9 @@ cpf_censoring/
 - 🔍 Detecta CPFs nos formatos:
   - `123.456.789-00`
   - `12345678900`
-- 🖊️ Censura apenas os **três primeiros dígitos** e os **dois últimos**, preservando o restante do CPF.
+  - `nº000.000.000-00`
+  - `000.000.000/00`
+- 🖊️ Censura apenas os **três primeiros dígitos** e os **dois últimos**, substituindo por `*`.
 - 📝 Processa múltiplos arquivos PDF automaticamente.
 - 💾 Salva os arquivos censurados na pasta `data/output`.
 
@@ -32,7 +36,7 @@ cpf_censoring/
 
 ## 🚀 Como Executar o Projeto
 
-### 1⃣ Criar o Ambiente Virtual (opcional, mas recomendado)
+### 1️⃣ Criar o Ambiente Virtual (opcional, mas recomendado)
 
 Se desejar rodar o projeto dentro de um ambiente isolado:
 
@@ -54,7 +58,7 @@ source venv/bin/activate
 
 ---
 
-### 2⃣ Instalar as Dependências
+### 2️⃣ Instalar as Dependências
 
 Após ativar o ambiente virtual, instale as bibliotecas necessárias:
 
@@ -64,7 +68,7 @@ pip install -r requirements.txt
 
 ---
 
-### 3⃣ Preparar os Arquivos PDF
+### 3️⃣ Preparar os Arquivos PDF
 
 - Coloque os arquivos que deseja processar na pasta **`data/input/`**.
 - O script salvará os PDFs processados em **`data/output/`**.
@@ -73,7 +77,7 @@ Se a pasta `data/output` não existir, o script criará automaticamente.
 
 ---
 
-### 4⃣ Executar o Script Principal
+### 4️⃣ Executar o Script Principal
 
 Com o ambiente virtual ativado e os PDFs na pasta `data/input`, execute:
 
@@ -81,11 +85,11 @@ Com o ambiente virtual ativado e os PDFs na pasta `data/input`, execute:
 python main.py
 ```
 
-O script processará **todos** os arquivos `.pdf` encontrados em `data/input`, aplicará a censura e salvará os resultados em `data/output`.
+O script processará **todos** os arquivos `.pdf` encontrados em `data/input`, aplicando a censura e salvando os resultados em `data/output`.
 
 ---
 
-## 🗂 Como Funciona o Código
+## 📂 Como Funciona o Código
 
 O código está dividido em módulos dentro da pasta `src/`, facilitando manutenção e expansão:
 
@@ -106,7 +110,7 @@ CPF: 123.456.789-00
 🔒 **Após a Censura:**
 ```
 Nome: João Silva
-CPF: ███.456.789-██
+CPF: ***.456.789-**
 ```
 
 ---
@@ -115,7 +119,7 @@ CPF: ███.456.789-██
 
 - 🎨 Melhorar o suporte para PDFs com diferentes tipos de formatação de texto.
 - 📊 Criar um relatório de processamento para acompanhar os arquivos modificados.
-- 🗃️ Adicionar suporte para subdiretórios em `data/input`.
+- 📂 Adicionar suporte para subdiretórios em `data/input`.
 
 ---
 
@@ -133,6 +137,5 @@ Caso tenha dúvidas ou sugestões, sinta-se à vontade para contribuir ou abrir 
 ---
 
 📈 **Autor:** *Yan Samuray*  
-📅 **Última atualização:** *05/02/2025*  
-💌 **Contato:** *[LinkedIn](https://www.linkedin.com/in/yansamuray/) ou e-mail: [yansamuray@gmail.com](mailto:yansamuray@gmail.com)*
-
+🗓 **Última atualização:** *10/03/2025*  
+📨 **Contato:** *[LinkedIn](https://www.linkedin.com/in/yansamuray/) ou e-mail: [yansamuray@gmail.com](mailto:yansamuray@gmail.com)*
